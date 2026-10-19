@@ -1,4 +1,5 @@
 import os
+
 import cv2
 from ultralytics import YOLO
 
@@ -38,11 +39,12 @@ while True:
             confidence = float(box.conf[0])
             cls = int(box.cls[0])
             label = f"{classNames[cls]} ({confidence * 100:.1f}%)"
-            cv2.putText(img, label, (x1, max(0, y1 - 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+            cv2.putText(
+                img, label, (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2
+            )
 
-    cv2.imshow('Webcam', img)
-    if cv2.waitKey(1) == ord('q'):
+    cv2.imshow("Webcam", img)
+    if cv2.waitKey(1) == ord("q"):
         break
 
 cap.release()
