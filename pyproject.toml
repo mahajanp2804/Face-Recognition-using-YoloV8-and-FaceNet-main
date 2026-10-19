@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "facerec"
+version = "0.1.0"
+description = "Face recognition attendance system using YOLOv8, MTCNN and FaceNet"
+readme = "README.md"
+requires-python = ">=3.9"
+# facenet-pytorch pins its own torch/torchvision, numpy and Pillow versions,
+# so those are not listed here to avoid resolver conflicts.
+dependencies = [
+    "facenet-pytorch==2.6.0",
+    "ultralytics>=8.1,<9",
+    "opencv-python>=4.8",
+    "PyYAML>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+facerec = "facerec.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
