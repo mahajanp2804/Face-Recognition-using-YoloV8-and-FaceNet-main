@@ -1,4 +1,5 @@
-path: 'path/to/your/dataset/directory' # dataset root dir
+# Dataset config for yolov8_trainer.py (YOLO format)
+path: 'path/to/your/dataset/directory' # dataset root dir — change this
 train: train/images  # train images (relative to 'path')
 val: valid/images  # val images (relative to 'path')
 

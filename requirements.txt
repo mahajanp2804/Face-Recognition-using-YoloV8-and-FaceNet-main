@@ -1,0 +1,6 @@
+# Python 3.9–3.12
+# facenet-pytorch pins its own torch/torchvision, numpy and Pillow versions,
+# so those are not listed here to avoid resolver conflicts.
+facenet-pytorch==2.6.0
+ultralytics>=8.1,<9
+opencv-python>=4.8

@@ -1,109 +1,128 @@
 import os
-import cv2
-from facenet_pytorch import MTCNN, InceptionResnetV1
-from ultralytics import YOLO
+import argparse
 import pickle
 
-# Initialize YOLOv8 model for face detection
+import cv2
+import torch
+from PIL import Image
+from facenet_pytorch import MTCNN, InceptionResnetV1
+from ultralytics import YOLO
+
+# ------------------- CONFIG -------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-weights_path = os.path.join(BASE_DIR, "detection", "weights", "best.pt")
-model = YOLO(weights_path)
-print("YOLOv8 model loaded successfully.")
+YOLO_WEIGHTS = os.path.join(BASE_DIR, "detection", "weights", "best.pt")
+DEFAULT_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
+DEFAULT_EMBEDDINGS_PATH = os.path.join(BASE_DIR, "known_embeddings.pkl")
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ------------------------------------------------
 
-# Initialize MTCNN for face detection and InceptionResnetV1 for face recognition
-mtcnn = MTCNN(keep_all=True)
-resnet = InceptionResnetV1(pretrained='vggface2').eval()
-print("MTCNN and InceptionResnetV1 models loaded successfully.")
 
-# Load known embeddings
-try:
-    with open('known_embeddings_claude.pkl', 'rb') as f:
-        known_embeddings = pickle.load(f)
-        print("Known embeddings loaded successfully.")
-except FileNotFoundError:
-    known_embeddings = {}
-    print("No known embeddings found. Starting with an empty dictionary.")
+def load_models():
+    model = YOLO(YOLO_WEIGHTS)
+    mtcnn = MTCNN(keep_all=False, device=DEVICE)
+    resnet = InceptionResnetV1(pretrained='vggface2').eval().to(DEVICE)
+    print("YOLOv8, MTCNN and InceptionResnetV1 models loaded successfully.")
+    return model, mtcnn, resnet
 
-# Function to save embeddings for images in a directory structure
-def save_embeddings_from_directory(directory_path):
+
+def load_embeddings(path):
+    if os.path.exists(path):
+        with open(path, 'rb') as f:
+            print(f"Loaded existing embeddings from '{path}'.")
+            return pickle.load(f)
+    print("No existing embeddings found. Starting with an empty dictionary.")
+    return {}
+
+
+def crop_faces(img, model):
+    """Detect faces with YOLO and return the cropped BGR face regions."""
+    results = model(img, verbose=False)
+    if not results or results[0].boxes is None or len(results[0].boxes) == 0:
+        return []
+
+    h, w = img.shape[:2]
+    faces = []
+    for box in results[0].boxes.xyxy.cpu().numpy():
+        x1, y1, x2, y2 = box.astype(int)
+
+        # Clamp coordinates to image bounds
+        x1, x2 = max(0, x1), min(w, x2)
+        y1, y2 = max(0, y1), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        faces.append(img[y1:y2, x1:x2])
+    return faces
+
+
+def embed_face(face_bgr, mtcnn, resnet):
+    """Align a face crop with MTCNN and return its 512-d FaceNet embedding, or None."""
+    face_rgb = Image.fromarray(cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB))
+    face_tensor = mtcnn(face_rgb)
+    if face_tensor is None:
+        return None
+
+    with torch.no_grad():
+        return resnet(face_tensor.unsqueeze(0).to(DEVICE)).cpu().numpy().flatten()
+
+
+def save_embeddings_from_directory(directory_path, embeddings_path):
     if not os.path.isdir(directory_path):
         print(f"Error: '{directory_path}' is not a valid directory.")
         return
 
-    for person_dir in os.listdir(directory_path):
-        person_path = os.path.join(directory_path, person_dir)
-        if os.path.isdir(person_path):
-            name = person_dir
-            person_embeddings = []
-            print(f"Processing '{name}' directory...")
+    model, mtcnn, resnet = load_models()
+    known_embeddings = load_embeddings(embeddings_path)
 
-            for filename in os.listdir(person_path):
-                if filename.lower().endswith(('.jpg', '.png', '.bmp', '.jpeg')):  # Add any other supported image extensions
-                    image_path = os.path.join(person_path, filename)
-                    img = cv2.imread(image_path)
-                    if img is None:
-                        print(f"Error: Unable to read image '{image_path}'.")
-                        continue
+    for name in sorted(os.listdir(directory_path)):
+        person_path = os.path.join(directory_path, name)
+        if not os.path.isdir(person_path):
+            continue
 
-                    print(f"Processing '{filename}'...")
-                    results = model(img)
+        print(f"Processing '{name}' directory...")
+        person_embeddings = []
 
-                    # Make sure we have results and boxes
-                    if not results or results[0].boxes is None or len(results[0].boxes) == 0:
-                        print(f"No faces detected in '{filename}', skipping.")
-                        continue
+        for filename in sorted(os.listdir(person_path)):
+            if not filename.lower().endswith(IMAGE_EXTENSIONS):
+                continue
 
-                    # Get xyxy boxes as numpy array
-                    boxes_xyxy = results[0].boxes.xyxy.cpu().numpy()
+            image_path = os.path.join(person_path, filename)
+            img = cv2.imread(image_path)
+            if img is None:
+                print(f"  Error: Unable to read image '{filename}', skipping.")
+                continue
 
-                    faces = []
-                    for box in boxes_xyxy:
-                        x1, y1, x2, y2 = box.astype(int)
+            faces = crop_faces(img, model)
+            if not faces:
+                print(f"  No faces detected in '{filename}', skipping.")
+                continue
 
-                        # Clamp coordinates to image bounds
-                        h, w = img.shape[:2]
-                        x1 = max(0, min(x1, w - 1))
-                        x2 = max(0, min(x2, w))
-                        y1 = max(0, min(y1, h - 1))
-                        y2 = max(0, min(y2, h))
+            embeddings = [e for e in (embed_face(f, mtcnn, resnet) for f in faces) if e is not None]
+            person_embeddings.extend(embeddings)
+            print(f"  {len(embeddings)} embedding(s) from '{filename}'.")
 
-                        if x2 <= x1 or y2 <= y1:
-                            continue
-
-                        face = img[y1:y2, x1:x2]
-                        if face.size == 0:
-                            continue
-                        faces.append(face)
-
-                    embeddings = []
-                    for face in faces:
-                        # Convert BGR to RGB for MTCNN
-                        face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
-
-                        # Get aligned face tensor from MTCNN
-                        face_tensor = mtcnn(face_rgb)
-
-                        if face_tensor is None:
-                            continue
-
-                        # If keep_all=True, mtcnn can return a batch
-                        if face_tensor.ndim == 4:
-                            face_tensor = face_tensor[0]
-
-                        face_embedding = resnet(face_tensor.unsqueeze(0)).detach().cpu().numpy().flatten()
-                        embeddings.append(face_embedding)
-
-                    person_embeddings.extend(embeddings)
-                    print(f"Embeddings saved for '{filename}'.")
-
+        if person_embeddings:
             known_embeddings[name] = person_embeddings
-            print(f"Embeddings saved for '{name}'.")
+            print(f"Saved {len(person_embeddings)} embedding(s) for '{name}'.")
+        else:
+            print(f"Warning: no usable faces found for '{name}', not saved.")
 
-    # Save the updated embeddings dictionary
-    with open('known_embeddings.pkl', 'wb') as f:
+    with open(embeddings_path, 'wb') as f:
         pickle.dump(known_embeddings, f)
-        print("Known embeddings saved successfully.")
+    print(f"Known embeddings saved to '{embeddings_path}' ({len(known_embeddings)} people).")
 
 
-directory_path = "/Users/pranav/Desktop/PC/Pranav/Deep Learning Lab/Project/Face-Recognition-using-YoloV8-and-FaceNet-main/known_faces"  # Enter your directory path here
-save_embeddings_from_directory(directory_path)
+def main():
+    parser = argparse.ArgumentParser(description="Generate FaceNet embeddings for known faces.")
+    parser.add_argument("--faces-dir", default=DEFAULT_FACES_DIR,
+                        help="Folder with one sub-folder of photos per person (default: known_faces/)")
+    parser.add_argument("--output", default=DEFAULT_EMBEDDINGS_PATH,
+                        help="Where to save the embeddings (default: known_embeddings.pkl)")
+    args = parser.parse_args()
+
+    save_embeddings_from_directory(args.faces_dir, args.output)
+
+
+if __name__ == "__main__":
+    main()

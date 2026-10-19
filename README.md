@@ -1,51 +1,100 @@
-# Face Recognition using YoloV8 and FaceNet
+# Face Recognition Attendance System — YOLOv8 + FaceNet
 
-This repository contains code for a face recognition system using YoloV8 for face detection and FaceNet for face recognition. YoloV8 efficiently detects faces in images, while FaceNet accurately matches and recognizes the detected faces by generating unique embeddings.
+A real-time face recognition system that marks attendance from a webcam. YOLOv8 detects faces, MTCNN aligns them, and FaceNet (InceptionResnetV1, VGGFace2 weights) turns each face into a 512-d embedding that is matched against enrolled people.
 
-## Table of Contents
-- [Description](#description)
-- [Installation](#installation)
-- [Usage](#usage)
+## How it works
 
+```
+Webcam frame
+   │
+   ▼
+YOLOv8n face detector ──► crop most confident face
+   │
+   ▼
+MTCNN alignment (160×160)
+   │
+   ▼
+FaceNet embedding (512-d)
+   │
+   ▼
+Nearest neighbour vs. enrolled embeddings (L2 distance < 0.8)
+   │
+   ├── match   ──► log Name + Timestamp to attendance.csv (once per day)
+   └── no match ──► "Face Not Recognised" (camera stops after 5 s)
+```
 
+## Project structure
 
-## Description
-
-This project integrates YoloV8, a state-of-the-art object detection model, with FaceNet, a robust face recognition model. The system first uses YoloV8 to detect faces in an image or video. Once faces are detected, FaceNet generates embeddings for each face, which are then used to recognize and match faces against a database of known faces. This approach combines the speed of YoloV8 with the high accuracy of FaceNet, making it suitable for real-time face recognition applications.
+```
+├── generate_face_embeddings.py   # enroll people from known_faces/ → known_embeddings.pkl
+├── face_recognition.py           # live recognition + attendance logging
+├── detection/
+│   ├── weights/best.pt           # trained YOLOv8n face detector
+│   ├── yolov8_detector.py        # standalone face-detection webcam demo
+│   ├── yolov8_trainer.py         # train / fine-tune the detector
+│   └── config.yaml               # dataset config for training
+├── known_faces/                  # your enrollment photos (git-ignored)
+└── requirements.txt
+```
 
 ## Installation
 
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/todap/Face-Recognition-using-YoloV8-and-FaceNet.git
-    cd Face-Recognition-using-YoloV8-and-FaceNet
-    ```
+Requires Python 3.9–3.12.
 
-2. Create and activate a virtual environment (optional but recommended):
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
-
-3. Install the required packages:
-    ```bash
-    pip install -r requirements.txt
-    ```
+```bash
+git clone https://github.com/mahajanp2804/Face-Recognition-using-YoloV8-and-FaceNet-main.git
+cd Face-Recognition-using-YoloV8-and-FaceNet-main
+python3 -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
 ## Usage
 
-1. **Generate Face Embeddings:**
-    ```bash
-    python generate_face_embeddings.py
-    ```
+**1. Add photos of each person** — one folder per person inside `known_faces/` (see [known_faces/README.md](known_faces/README.md)):
 
-2. **Run Face Recognition:**
-    ```bash
-    python face_recognition.py
-    ```
-## Note    
-Dont forget to add your paths to directory
+```
+known_faces/
+├── Alice Smith/  01.jpg  02.jpg
+└── Bob Lee/      01.jpg
+```
 
+**2. Generate embeddings**
 
+```bash
+python generate_face_embeddings.py
+```
 
+Options: `--faces-dir <folder>` and `--output <file.pkl>`. Re-running updates the people found in the folder and keeps everyone else already in the file.
 
+**3. Run face recognition and attendance**
+
+```bash
+python face_recognition.py
+```
+
+The webcam opens, recognises the first known face and writes it to `attendance.csv`. A person is only marked once per day. Press `q` to quit early. Settings such as `RECOGNITION_THRESHOLD`, `TIMER_SECONDS` and `CAMERA_INDEX` are at the top of the file.
+
+**Optional — face detection demo / training**
+
+```bash
+python detection/yolov8_detector.py                 # live face boxes only
+python detection/yolov8_trainer.py --epochs 100     # set the dataset path in detection/config.yaml first
+```
+
+## Privacy
+
+Face photos, embeddings and attendance logs are personal biometric data. `known_faces/`, `*.pkl` and `attendance*.csv` are git-ignored so they stay on your machine. Only enroll people who have agreed to it.
+
+## Credits
+
+This project builds on [todap/Face-Recognition-using-YoloV8-and-FaceNet](https://github.com/todap/Face-Recognition-using-YoloV8-and-FaceNet), which provided the YOLOv8 face-detection weights, the detector/trainer scripts and the original detection → FaceNet recognition pipeline.
+
+**Added in this version:**
+- Attendance logging to CSV with once-per-day duplicate check
+- Multiple embeddings per person, matched by nearest neighbour
+- Automatic GPU/CPU selection and auto-shutoff timer
+- Command-line options, portable paths and bounding-box clamping
+- `requirements.txt`, `.gitignore` for personal data, and bug fixes across the scripts
+
+Models: [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) · [facenet-pytorch](https://github.com/timesler/facenet-pytorch) (MTCNN + InceptionResnetV1)

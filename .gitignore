@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Personal / biometric data — never commit
+known_faces/*
+!known_faces/README.md
+*.pkl
+attendance*.csv
+
+# YOLO training outputs and downloaded base weights
+runs/
+yolov8*.pt
