@@ -1,5 +1,6 @@
-import os
 import argparse
+import os
+
 from ultralytics import YOLO
 
 # Fine-tunes YOLOv8n for single-class face detection.
@@ -8,11 +9,14 @@ from ultralytics import YOLO
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 parser = argparse.ArgumentParser(description="Train the YOLOv8 face detector.")
-parser.add_argument("--data", default=os.path.join(BASE_DIR, "config.yaml"), help="Dataset config YAML")
+parser.add_argument(
+    "--data", default=os.path.join(BASE_DIR, "config.yaml"), help="Dataset config YAML"
+)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--imgsz", type=int, default=640)
-parser.add_argument("--resume", metavar="LAST_PT",
-                    help="Resume an interrupted run from its last.pt checkpoint")
+parser.add_argument(
+    "--resume", metavar="LAST_PT", help="Resume an interrupted run from its last.pt checkpoint"
+)
 args = parser.parse_args()
 
 if args.resume:

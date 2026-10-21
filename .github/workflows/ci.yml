@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Only the light dependencies: the tests use fake models, so torch,
+      # ultralytics and facenet-pytorch (and their weights) are not needed.
+      - name: Install test dependencies
+        run: pip install ruff pytest numpy PyYAML opencv-python-headless
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Pytest
+        run: pytest -v
