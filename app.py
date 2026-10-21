@@ -70,6 +70,7 @@ with st.sidebar:
     st.metric("Enrolled people", len(db))
     st.metric("Enrolled face embeddings", sum(len(v) for v in db.values()))
     st.caption(f"Device: `{embedder.device}`")
+    st.caption(f"Liveness check: {'on' if config.liveness_enabled else 'off'} (config.yaml)")
 
 matcher = FaceMatcher(db, threshold)
 
@@ -85,7 +86,16 @@ with tab_recognize:
         upload = st.camera_input("Look at the camera and take a photo")
     else:
         upload = st.file_uploader("Photo", type=[e.lstrip(".") for e in IMAGE_EXTENSIONS])
-    auto_mark = st.checkbox("Mark attendance for recognised people", value=True)
+    if config.liveness_enabled:
+        # A single photo can't show a head turn, and an uploaded photo is exactly the spoof
+        # the liveness check exists to stop, so only the live CLI may mark attendance.
+        st.warning(
+            "Liveness checking is on, so attendance isn't marked from photos here. "
+            "Use `python -m facerec run` at the camera, which asks for a head turn."
+        )
+        auto_mark = False
+    else:
+        auto_mark = st.checkbox("Mark attendance for recognised people", value=True)
 
     if upload is not None:
         data = upload.getvalue()

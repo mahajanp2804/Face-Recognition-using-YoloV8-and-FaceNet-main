@@ -5,8 +5,15 @@ import pytest
 
 pytest.importorskip("cv2")
 
+from facerec.liveness import LivenessSettings  # noqa: E402
 from facerec.matcher import UNKNOWN, FaceMatcher  # noqa: E402
-from facerec.recognize import draw_results, recognize_faces, record_attendance  # noqa: E402
+from facerec.recognize import (  # noqa: E402
+    AttendanceSession,
+    FaceResult,
+    draw_results,
+    recognize_faces,
+    record_attendance,
+)
 
 
 def unit(index: int) -> np.ndarray:
@@ -92,3 +99,82 @@ def test_record_attendance_once_per_day(tmp_path):
     assert first == {"Alice": True, "Bob": True}
     assert second == {"Bob": False, "Carol": True}
     assert path.read_text().count("\n") == 4  # header + Alice, Bob, Carol
+
+
+# ---------------------------------------------------------------- liveness integration
+
+LANDMARKS = np.array([[1, 1], [3, 1], [2, 2], [1.5, 3], [2.5, 3]], dtype=np.float32)
+
+
+class LandmarkEmbedder(FakeEmbedder):
+    def embed_with_landmarks(self, face_bgr):
+        embedding = self.embed(face_bgr)
+        return (None, None) if embedding is None else (embedding, LANDMARKS.copy())
+
+
+def test_landmarks_are_returned_in_frame_coordinates():
+    matcher = FaceMatcher({"Bob": [unit(2)]})
+
+    (result,) = recognize_faces(
+        frame_with_patches(),
+        FakeDetector([(110, 10, 150, 50)]),
+        LandmarkEmbedder(),
+        matcher,
+        with_landmarks=True,
+    )
+
+    assert result.name == "Bob"
+    np.testing.assert_allclose(result.landmarks, LANDMARKS + [110, 10])
+
+
+def face(name, cue=None):
+    """A FaceResult whose landmarks produce the given depth cue (None = no landmarks)."""
+    landmarks = None
+    if cue is not None:
+        landmarks = np.array([[-1, 0], [1, 0], [2 * cue, 1], [-0.8, 2], [0.8, 2]], float)
+    return FaceResult((0, 0, 10, 10), name, 0.1, landmarks)
+
+
+class Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        self.t += 1 / 30
+        return self.t
+
+
+def test_session_without_liveness_marks_immediately(tmp_path):
+    session = AttendanceSession(tmp_path / "a.csv")
+
+    pending = session.update([face("Alice"), face(UNKNOWN)])
+
+    assert pending == set()
+    assert session.marked == {"Alice": True}
+
+
+def test_session_with_liveness_waits_for_head_turn(tmp_path):
+    path = tmp_path / "a.csv"
+    session = AttendanceSession(path, LivenessSettings(0.3, 10), clock=Clock())
+
+    for _ in range(30):  # a photo of Alice: recognised, but the cue never moves
+        assert session.update([face("Alice", 0.05)]) == {"Alice"}
+    assert session.marked == {}
+    assert not path.exists()
+    assert session.pending_deadline() is not None
+
+    for cue in [-0.2] * 4 + [0.2] * 4:  # the real Alice turns her head
+        session.update([face("Alice", cue)])
+    assert session.marked == {"Alice": True}
+    assert session.update([face("Alice", 0.0)]) == set()  # already done
+    assert session.pending_deadline() is None
+
+
+def test_session_tracks_people_independently(tmp_path):
+    session = AttendanceSession(tmp_path / "a.csv", LivenessSettings(0.3, 10), clock=Clock())
+
+    for cue in [-0.2] * 4 + [0.2] * 4:
+        session.update([face("Alice", cue), face("Bob", 0.1), face("Carol")])
+
+    assert session.marked == {"Alice": True}
+    assert set(session.challenges) == {"Alice", "Bob", "Carol"}

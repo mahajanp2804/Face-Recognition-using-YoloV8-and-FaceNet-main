@@ -19,8 +19,10 @@ DEFAULT_PATHS = {
 DEFAULT_RECOGNITION_THRESHOLD = 0.8
 DEFAULT_TIMER_SECONDS = 5.0
 DEFAULT_CAMERA_INDEX = 0
+# Mirrors facerec.liveness defaults (not imported, so config stays dependency-free)
+DEFAULT_LIVENESS = {"enabled": False, "required_span": 0.30, "timeout_seconds": 10.0}
 
-_TOP_LEVEL_KEYS = {"paths", "recognition_threshold", "timer_seconds", "camera_index"}
+_TOP_LEVEL_KEYS = {"paths", "recognition_threshold", "timer_seconds", "camera_index", "liveness"}
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,9 @@ class Config:
     recognition_threshold: float = DEFAULT_RECOGNITION_THRESHOLD
     timer_seconds: float = DEFAULT_TIMER_SECONDS
     camera_index: int = DEFAULT_CAMERA_INDEX
+    liveness_enabled: bool = DEFAULT_LIVENESS["enabled"]
+    liveness_required_span: float = DEFAULT_LIVENESS["required_span"]
+    liveness_timeout_seconds: float = DEFAULT_LIVENESS["timeout_seconds"]
 
 
 def load_config(path: str | Path | None = None) -> Config:
@@ -64,6 +69,11 @@ def load_config(path: str | Path | None = None) -> Config:
     if unknown_paths:
         raise ValueError(f"Unknown key(s) under 'paths': {', '.join(sorted(unknown_paths))}")
 
+    liveness = {**DEFAULT_LIVENESS, **(data.get("liveness") or {})}
+    unknown_liveness = set(liveness) - set(DEFAULT_LIVENESS)
+    if unknown_liveness:
+        raise ValueError(f"Unknown key(s) under 'liveness': {', '.join(sorted(unknown_liveness))}")
+
     def resolve(value: str) -> Path:
         p = Path(value).expanduser()
         return p if p.is_absolute() else base_dir / p
@@ -78,4 +88,7 @@ def load_config(path: str | Path | None = None) -> Config:
         ),
         timer_seconds=float(data.get("timer_seconds", DEFAULT_TIMER_SECONDS)),
         camera_index=int(data.get("camera_index", DEFAULT_CAMERA_INDEX)),
+        liveness_enabled=bool(liveness["enabled"]),
+        liveness_required_span=float(liveness["required_span"]),
+        liveness_timeout_seconds=float(liveness["timeout_seconds"]),
     )
