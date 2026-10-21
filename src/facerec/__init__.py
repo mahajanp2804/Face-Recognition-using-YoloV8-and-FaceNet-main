@@ -5,4 +5,4 @@ Submodules that need torch / ultralytics (``detector``, ``embedder``, ``enroll``
 stay importable with only numpy and PyYAML installed.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
