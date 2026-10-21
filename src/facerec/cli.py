@@ -66,9 +66,17 @@ def cmd_run(args: argparse.Namespace, config: Config) -> int:
         )
         return 1
 
+    from facerec.liveness import LivenessSettings
+
     matcher = _load_matcher(config, args.threshold)
     detector, embedder = _load_models(config)
     source = args.source if args.source is not None else config.camera_index
+    use_liveness = config.liveness_enabled if args.liveness is None else args.liveness
+    liveness = (
+        LivenessSettings(config.liveness_required_span, config.liveness_timeout_seconds)
+        if use_liveness
+        else None
+    )
 
     try:
         run(
@@ -80,6 +88,7 @@ def cmd_run(args: argparse.Namespace, config: Config) -> int:
             timer_seconds=config.timer_seconds,
             continuous=args.continuous,
             show=not args.no_window,
+            liveness=liveness,
         )
     except OSError as e:
         logger.error("%s", e)
@@ -238,6 +247,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--no-window", action="store_true", help="Don't open a display window (headless)"
+    )
+    run.add_argument(
+        "--liveness",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Require a head-turn liveness check before marking (default: from config)",
     )
     run.set_defaults(func=cmd_run)
 
