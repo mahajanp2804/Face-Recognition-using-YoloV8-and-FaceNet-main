@@ -42,6 +42,34 @@ def compare_embeddings(
     return best_name, best_dist
 
 
+class FaceMatcher:
+    """Vectorised nearest-neighbour matcher over the whole database.
+
+    Stacks every enrolled embedding into one ``(N, 512)`` matrix up front, so each query is
+    a single NumPy operation instead of a Python loop over people and embeddings.
+    """
+
+    def __init__(self, db: EmbeddingDB, threshold: float = DEFAULT_RECOGNITION_THRESHOLD) -> None:
+        self.threshold = threshold
+        self.names: list[str] = [name for name, embs in db.items() for _ in embs]
+        if self.names:
+            self.matrix = np.stack([e for embs in db.values() for e in embs]).astype(np.float32)
+        else:
+            self.matrix = np.empty((0, 0), dtype=np.float32)
+
+    def __len__(self) -> int:
+        return len(self.names)
+
+    def match(self, embedding: np.ndarray) -> tuple[str, float]:
+        """Same contract as :func:`compare_embeddings`."""
+        if not self.names:
+            return UNKNOWN, float("inf")
+        dists = np.linalg.norm(self.matrix - embedding.astype(np.float32), axis=1)
+        i = int(np.argmin(dists))
+        dist = float(dists[i])
+        return (self.names[i] if dist < self.threshold else UNKNOWN), dist
+
+
 def load_embeddings(path: Path) -> EmbeddingDB:
     """Load the embedding database, or return an empty one if the file does not exist."""
     if not path.exists():
