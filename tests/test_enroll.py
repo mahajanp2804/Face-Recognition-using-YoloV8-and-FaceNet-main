@@ -7,7 +7,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from facerec.enroll import enroll_directory  # noqa: E402
+from facerec.enroll import clean_person_name, enroll_directory, enroll_person  # noqa: E402
 
 
 class FakeDetector:
@@ -64,3 +64,37 @@ def test_enroll_keeps_people_not_in_folder(tmp_path):
     db = enroll_directory(faces, output, FakeDetector(), FakeEmbedder())
 
     assert sorted(db) == ["Bob Lee", "Carol"]
+
+
+def test_enroll_person_replaces_only_that_person(tmp_path):
+    output = tmp_path / "known_embeddings.pkl"
+    with output.open("wb") as f:
+        pickle.dump({"Carol": [np.zeros(512)], "Bob Lee": [np.zeros(512)] * 5}, f)
+    write_image(tmp_path / "known_faces" / "Bob Lee" / "01.jpg", 200)
+
+    n = enroll_person(tmp_path / "known_faces" / "Bob Lee", output, FakeDetector(), FakeEmbedder())
+
+    with output.open("rb") as f:
+        db = pickle.load(f)
+    assert n == 1
+    assert len(db["Bob Lee"]) == 1
+    assert "Carol" in db
+
+
+def test_enroll_person_with_no_faces_saves_nothing(tmp_path):
+    output = tmp_path / "known_embeddings.pkl"
+    write_image(tmp_path / "Nobody" / "blank.jpg", 0)
+
+    assert enroll_person(tmp_path / "Nobody", output, FakeDetector(), FakeEmbedder()) == 0
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("raw, expected", [("  Alice   Smith ", "Alice Smith"), ("Bob", "Bob")])
+def test_clean_person_name(raw, expected):
+    assert clean_person_name(raw) == expected
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "..", "../evil", "a/b", "C:\\x", "what?"])
+def test_clean_person_name_rejects_unsafe_names(bad):
+    with pytest.raises(ValueError):
+        clean_person_name(bad)

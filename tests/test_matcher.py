@@ -2,7 +2,13 @@ import math
 
 import numpy as np
 
-from facerec.matcher import UNKNOWN, compare_embeddings, load_embeddings, save_embeddings
+from facerec.matcher import (
+    UNKNOWN,
+    FaceMatcher,
+    compare_embeddings,
+    load_embeddings,
+    save_embeddings,
+)
 
 
 def unit(index: int, dim: int = 512) -> np.ndarray:
@@ -76,3 +82,36 @@ def test_save_and_load_round_trip(tmp_path):
 
 def test_load_missing_file_returns_empty_db(tmp_path):
     assert load_embeddings(tmp_path / "missing.pkl") == {}
+
+
+# ---------------------------------------------------------------- FaceMatcher
+
+
+def test_face_matcher_agrees_with_compare_embeddings():
+    rng = np.random.default_rng(0)
+    db = {f"p{i}": [rng.standard_normal(512) for _ in range(3)] for i in range(20)}
+    db["p7"].append(np.zeros(512))
+    matcher = FaceMatcher(db, threshold=20.0)
+
+    for query in [rng.standard_normal(512) for _ in range(25)] + [np.full(512, 0.01)]:
+        name, dist = matcher.match(query)
+        expected_name, expected_dist = compare_embeddings(query, db, threshold=20.0)
+        assert name == expected_name
+        assert math.isclose(dist, expected_dist, rel_tol=1e-5)
+
+
+def test_face_matcher_threshold_and_unknown():
+    matcher = FaceMatcher({"Alice": [unit(0)], "Bob": [unit(2)]}, threshold=0.8)
+
+    assert matcher.match(unit(2) + 0.1 * unit(3))[0] == "Bob"
+    name, dist = matcher.match(unit(1))
+    assert name == UNKNOWN
+    assert math.isclose(dist, math.sqrt(2), rel_tol=1e-6)
+    assert len(matcher) == 2
+
+
+def test_face_matcher_empty_database():
+    matcher = FaceMatcher({"Alice": []})
+
+    assert len(matcher) == 0
+    assert matcher.match(unit(0)) == (UNKNOWN, float("inf"))
