@@ -12,10 +12,11 @@ A real-time face recognition system that marks attendance from a webcam, a video
 - Recognises **every face in the frame** and draws a labelled box with its match distance
 - **15 FPS end to end on a laptop CPU** (Apple M4, 640 px frames) — see [Performance](#performance)
 - Attendance log that marks each person **once per day**, in kiosk or continuous mode
+- **Liveness check against photo spoofing**: a head-turn challenge using a geometric, affine-invariant cue, with no extra model — see [Liveness check](#liveness-check)
 - **Streamlit web app** to recognise from the camera, enroll people and browse attendance
 - `facerec` command-line tool: `enroll`, `run`, `benchmark`, `evaluate`
 - Built-in **accuracy evaluation**: ROC curve, AUC, equal error rate, TAR @ FAR, k-fold accuracy (LFW protocol supported)
-- Installable Python package with YAML config, logging, type hints, 58 unit tests and CI
+- Installable Python package with YAML config, logging, type hints, 74 unit tests and CI
 
 ## How it works
 
@@ -67,9 +68,10 @@ This writes `known_embeddings.pkl` (name → list of 512-d embeddings). Re-runni
 python -m facerec run --source 0                 # kiosk: stop once someone is recognised
 python -m facerec run --source 0 --continuous    # keep going, mark everyone who appears
 python -m facerec run --source lecture.mp4 --continuous --no-window   # headless, on a video
+python -m facerec run --source 0 --liveness      # require a head turn before marking
 ```
 
-`--source` is a webcam index or a video file. Every face gets a box: green with the name and distance when recognised, red when unknown. Kiosk mode marks everyone known in the first frame that has a match, then closes (or gives up after `timer_seconds`). Each person is marked at most once per day in `attendance.csv`. Press `q` to quit. `--threshold` overrides the match threshold.
+`--source` is a webcam index or a video file. Every face gets a box: green with the name and distance when recognised, red when unknown. Kiosk mode marks everyone known in the first frame that has a match, then closes (or gives up after `timer_seconds`). Each person is marked at most once per day in `attendance.csv`. Press `q` to quit. `--threshold` overrides the match threshold, and `--liveness` / `--no-liveness` override the liveness setting in `config.yaml`.
 
 ### 3. Web app
 
@@ -103,6 +105,31 @@ python -m facerec evaluate --dataset my_people/ --max-pairs 3000 --json report.j
 
 `--dataset` is a folder with one sub-folder of photos per person. With LFW's `pairs.txt` it follows the standard [LFW](https://vis-www.cs.umass.edu/lfw/) verification protocol (6,000 pairs, 10-fold cross-validation); otherwise it samples balanced same-person / different-person pairs. It reports k-fold accuracy, ROC AUC, equal error rate, TAR at FAR = 1% and 0.1%, the accuracy-maximising threshold and the accuracy at your configured threshold, and can save a ROC curve plus a distance histogram.
 
+## Liveness check
+
+Without a liveness check, anyone holding up a printed photo or a phone picture of an enrolled person gets them marked present. With `--liveness` (or `liveness.enabled: true` in `config.yaml`), a recognised person's box turns orange with **"turn head"** and they are only marked after turning their head left and right.
+
+**How it works.** MTCNN already finds 5 landmarks on every face (eyes, nose tip, mouth corners). Write the nose position in the coordinate frame of the eyes and mouth:
+
+```
+nose − eye_mid  =  a · (right_eye − left_eye)  +  b · (mouth_mid − eye_mid)
+```
+
+A photo is flat, and any way you hold a flat photo in front of a camera (move, rotate, tilt, skew) is, to a good approximation, an affine transform of it. Affine transforms preserve these coordinates, so **`a` stays constant for a photo**. A real head is 3-D: the nose sticks out in front of the eyes and mouth, so turning the head moves it sideways relative to them and `a` changes (about 0.35 · tan(yaw)). A person passes once the median-filtered `a` has covered a span of 0.30 (about ±25° of head turn) within 10 seconds.
+
+**Calibration and testing** (on the enrolled photos, CPU):
+
+| Measurement | Value |
+| --- | ---: |
+| Landmark noise, still face (std. dev. per frame) | 0.01–0.02 |
+| Printed photo tilted ±15% and rotated ±20° (smoothed, worst of 25 runs) | 0.20 |
+| **Pass threshold** | **0.30** |
+| Real head turned ±30° (3-D face model) | ≈ 0.40 |
+
+End to end, `facerec run --liveness` on 5 synthetic "photo waved at the camera" videos (one per enrolled photo, 8 s each) recognised the person every time and marked them **0 out of 5 times**; with `--no-liveness` all 5 were marked.
+
+**Limits.** This stops printed photos and still images on a screen. It does not stop a replayed *video* of the person turning their head, or a 3-D mask; those need a trained anti-spoofing model. Real head turns were checked against a 3-D face model and unit tests, not yet against a recorded set of live users, so try it at your camera and tune `required_span` if needed (`-v` logs the cue and span each frame). The web app can't run a head-turn challenge on a single photo, so when liveness is on it recognises faces but doesn't mark attendance.
+
 ## Performance
 
 `python -m facerec benchmark`, 200 timed frames at 640 px, one face per frame, **CPU only** (Apple M4, PyTorch 2.14):
@@ -130,6 +157,9 @@ python -m facerec evaluate --dataset my_people/ --max-pairs 3000 --json report.j
 | `recognition_threshold` | `0.8` | Max L2 distance to count as a match |
 | `timer_seconds` | `5` | Kiosk mode gives up after this many seconds |
 | `camera_index` | `0` | Default webcam for `run` |
+| `liveness.enabled` | `false` | Require a head-turn liveness check before marking |
+| `liveness.required_span` | `0.30` | How far the depth cue must move (≈ ±25° head turn) |
+| `liveness.timeout_seconds` | `10` | Time allowed for the head turn before the attempt restarts |
 
 ## Project structure
 
@@ -141,7 +171,8 @@ python -m facerec evaluate --dataset my_people/ --max-pairs 3000 --json report.j
 │   ├── detector.py       # YOLOv8 face detection, crop + box clamping
 │   ├── embedder.py       # MTCNN alignment + FaceNet 512-d embeddings
 │   ├── matcher.py        # vectorised nearest-neighbour matching, embeddings load/save
-│   ├── recognize.py      # multi-face recognition, drawing, live loop
+│   ├── recognize.py      # multi-face recognition, drawing, attendance session, live loop
+│   ├── liveness.py       # head-turn liveness check (affine-invariant depth cue)
 │   ├── attendance.py     # once-per-day CSV attendance log
 │   ├── enroll.py         # photos → embeddings
 │   ├── benchmark.py      # per-stage latency + FPS
@@ -161,7 +192,7 @@ python -m facerec evaluate --dataset my_people/ --max-pairs 3000 --json report.j
 
 ```bash
 pip install -e ".[app,dev]"
-pytest          # 58 tests
+pytest          # 74 tests
 ruff check .    # lint
 ruff format .   # format
 ```
@@ -179,6 +210,7 @@ This project builds on [todap/Face-Recognition-using-YoloV8-and-FaceNet](https:/
 **Added in this version:**
 - Attendance logging with a once-per-day duplicate check; kiosk and continuous modes
 - Multi-face recognition with labelled boxes, and MTCNN as a false-positive filter
+- Head-turn liveness check against photo spoofing
 - Vectorised matching over multiple embeddings per person
 - Streamlit web app for recognition, enrollment and attendance
 - `benchmark` and `evaluate` commands (per-stage latency; ROC/AUC/EER/TAR@FAR, LFW protocol)
