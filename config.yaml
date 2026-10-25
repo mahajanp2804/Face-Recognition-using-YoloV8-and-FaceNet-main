@@ -1,0 +1,18 @@
+# Settings for `python -m facerec`. Relative paths are resolved against this file's folder.
+
+paths:
+  faces_dir: known_faces                  # one sub-folder of photos per person
+  embeddings: known_embeddings.pkl        # written by `enroll`, read by `run`
+  yolo_weights: detection/weights/best.pt # YOLOv8 face detector
+  attendance: attendance.csv              # Name,Timestamp log
+
+recognition_threshold: 0.8   # max L2 distance between embeddings to count as a match
+timer_seconds: 5             # stop looking for a face after this many seconds
+camera_index: 0              # default webcam for `run` when --source is not given
+
+# Head-turn liveness check against photo spoofing (see README). When enabled, `run` only
+# marks a recognised person after they turn their head left and right.
+liveness:
+  enabled: false
+  required_span: 0.30        # how far the nose must move relative to eyes/mouth (~±25° turn)
+  timeout_seconds: 10        # time allowed for the head turn before the attempt restarts
