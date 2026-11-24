@@ -139,6 +139,26 @@ def tar_at_far(fpr: np.ndarray, tpr: np.ndarray, far: float) -> float:
     return float(tpr[ok].max()) if ok.any() else 0.0
 
 
+def threshold_at_far(fpr: np.ndarray, tpr: np.ndarray, thresholds: np.ndarray, far: float) -> float:
+    """Loosest distance threshold whose false-accept rate is still <= ``far``.
+
+    Accept a pair when its distance is <= the returned value (``-inf`` if none qualifies).
+    """
+    ok = np.flatnonzero(fpr <= far)
+    return float(thresholds[ok[-1]]) if ok.size else float("-inf")
+
+
+def rates_at(distances: np.ndarray, same: np.ndarray, threshold: float) -> tuple[float, float]:
+    """``(true-accept rate, false-accept rate)`` when matching on distance < ``threshold``.
+
+    Uses the same strict comparison as the matcher at runtime.
+    """
+    distances = np.asarray(distances)
+    same = np.asarray(same, dtype=bool)
+    accepted = distances < threshold
+    return float(accepted[same].mean()), float(accepted[~same].mean())
+
+
 def accuracy_at(distances: np.ndarray, same: np.ndarray, threshold: float) -> float:
     return float(np.mean((np.asarray(distances) < threshold) == np.asarray(same, dtype=bool)))
 
@@ -182,10 +202,14 @@ class VerificationReport:
     accuracy_at_best_threshold: float
     configured_threshold: float
     accuracy_at_configured_threshold: float
+    tar_at_configured_threshold: float
+    far_at_configured_threshold: float
     roc_auc: float
     eer: float
     tar_at_far_1e2: float
     tar_at_far_1e3: float
+    threshold_at_far_1e2: float
+    threshold_at_far_1e3: float
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -203,15 +227,22 @@ class VerificationReport:
             ),
             ("ROC AUC", f"{self.roc_auc:.4f}"),
             ("Equal error rate", f"{self.eer:.2%}"),
-            ("TAR @ FAR = 1%", f"{self.tar_at_far_1e2:.2%}"),
-            ("TAR @ FAR = 0.1%", f"{self.tar_at_far_1e3:.2%}"),
+            (
+                "TAR @ FAR = 1%",
+                f"{self.tar_at_far_1e2:.2%} (threshold {self.threshold_at_far_1e2:.3f})",
+            ),
+            (
+                "TAR @ FAR = 0.1%",
+                f"{self.tar_at_far_1e3:.2%} (threshold {self.threshold_at_far_1e3:.3f})",
+            ),
             (
                 "Best threshold (L2)",
                 f"{self.best_threshold:.3f} → {self.accuracy_at_best_threshold:.2%} accuracy",
             ),
             (
                 "Configured threshold (L2)",
-                f"{self.configured_threshold:.3f} → "
+                f"{self.configured_threshold:.3f} → TAR {self.tar_at_configured_threshold:.2%}, "
+                f"FAR {self.far_at_configured_threshold:.2%}, "
                 f"{self.accuracy_at_configured_threshold:.2%} accuracy",
             ),
         ]
@@ -229,9 +260,10 @@ def verification_report(
 ) -> VerificationReport:
     distances = np.asarray(distances, dtype=np.float64)
     same = np.asarray(same, dtype=bool)
-    fpr, tpr, _ = roc_curve(distances, same)
+    fpr, tpr, thresholds = roc_curve(distances, same)
     acc, std = kfold_accuracy(distances, same, folds)
     t_best, acc_best = best_threshold(distances, same)
+    tar_cfg, far_cfg = rates_at(distances, same, configured_threshold)
     return VerificationReport(
         pairs=len(distances),
         pairs_skipped=pairs_skipped,
@@ -244,10 +276,14 @@ def verification_report(
         accuracy_at_best_threshold=acc_best,
         configured_threshold=configured_threshold,
         accuracy_at_configured_threshold=accuracy_at(distances, same, configured_threshold),
+        tar_at_configured_threshold=tar_cfg,
+        far_at_configured_threshold=far_cfg,
         roc_auc=auc(fpr, tpr),
         eer=equal_error_rate(fpr, tpr),
         tar_at_far_1e2=tar_at_far(fpr, tpr, 1e-2),
         tar_at_far_1e3=tar_at_far(fpr, tpr, 1e-3),
+        threshold_at_far_1e2=threshold_at_far(fpr, tpr, thresholds, 1e-2),
+        threshold_at_far_1e3=threshold_at_far(fpr, tpr, thresholds, 1e-3),
     )
 
 
@@ -322,7 +358,6 @@ def plot_roc(
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.2))
 
     ax1.plot(fpr, tpr, lw=2, color="#2f6fdf", label=f"AUC = {report.roc_auc:.4f}")
-    ax1.plot([0, 1], [0, 1], ls="--", lw=1, color="#999")
     ax1.set(xscale="log", xlim=(1e-4, 1), ylim=(0, 1.01))
     ax1.set(xlabel="False accept rate (log scale)", ylabel="True accept rate", title="ROC curve")
     ax1.grid(alpha=0.3)
