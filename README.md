@@ -9,6 +9,7 @@ A real-time face recognition system that marks attendance from a webcam, a video
 
 **Features**
 
+- **98.2% verification accuracy on LFW** (standard 6,000-pair protocol, full pipeline) — see [Accuracy](#accuracy-on-lfw)
 - Recognises **every face in the frame** and draws a labelled box with its match distance
 - **15 FPS end to end on a laptop CPU** (Apple M4, 640 px frames) — see [Performance](#performance)
 - Attendance log that marks each person **once per day**, in kiosk or continuous mode
@@ -16,7 +17,7 @@ A real-time face recognition system that marks attendance from a webcam, a video
 - **Streamlit web app** to recognise from the camera, enroll people and browse attendance
 - `facerec` command-line tool: `enroll`, `run`, `benchmark`, `evaluate`
 - Built-in **accuracy evaluation**: ROC curve, AUC, equal error rate, TAR @ FAR, k-fold accuracy (LFW protocol supported)
-- Installable Python package with YAML config, logging, type hints, 74 unit tests and CI
+- Installable Python package with YAML config, logging, type hints, 81 unit tests and CI
 
 ## How it works
 
@@ -103,7 +104,16 @@ python -m facerec evaluate --dataset path/to/lfw --pairs path/to/pairs.txt --roc
 python -m facerec evaluate --dataset my_people/ --max-pairs 3000 --json report.json
 ```
 
-`--dataset` is a folder with one sub-folder of photos per person. With LFW's `pairs.txt` it follows the standard [LFW](https://vis-www.cs.umass.edu/lfw/) verification protocol (6,000 pairs, 10-fold cross-validation); otherwise it samples balanced same-person / different-person pairs. It reports k-fold accuracy, ROC AUC, equal error rate, TAR at FAR = 1% and 0.1%, the accuracy-maximising threshold and the accuracy at your configured threshold, and can save a ROC curve plus a distance histogram.
+To reproduce the [LFW results](#accuracy-on-lfw) (about 9 minutes on a laptop CPU):
+
+```bash
+curl -L -o lfw.tgz https://ndownloader.figshare.com/files/5976018     # original LFW images, 180 MB
+curl -L -o pairs.txt https://ndownloader.figshare.com/files/5976006   # official 6,000 test pairs
+tar -xzf lfw.tgz
+python -m facerec evaluate --dataset lfw --pairs pairs.txt --roc lfw_roc.png --distances lfw.npz
+```
+
+`--dataset` is a folder with one sub-folder of photos per person. With LFW's `pairs.txt` it follows the standard [LFW](https://vis-www.cs.umass.edu/lfw/) verification protocol (6,000 pairs, 10-fold cross-validation); otherwise it samples balanced same-person / different-person pairs. It reports k-fold accuracy, ROC AUC, equal error rate, TAR at FAR = 1% and 0.1% (with the threshold that achieves each), the accuracy-maximising threshold, and the true/false-accept rates at your configured threshold. It can save a ROC curve plus distance histogram (`--roc`), the metrics (`--json`) and every pair's distance (`--distances`).
 
 ## Liveness check
 
@@ -129,6 +139,34 @@ A photo is flat, and any way you hold a flat photo in front of a camera (move, r
 End to end, `facerec run --liveness` on 5 synthetic "photo waved at the camera" videos (one per enrolled photo, 8 s each) recognised the person every time and marked them **0 out of 5 times**; with `--no-liveness` all 5 were marked.
 
 **Limits.** This stops printed photos and still images on a screen. It does not stop a replayed *video* of the person turning their head, or a 3-D mask; those need a trained anti-spoofing model. Real head turns were checked against a 3-D face model and unit tests, not yet against a recorded set of live users, so try it at your camera and tune `required_span` if needed (`-v` logs the cue and span each frame). The web app can't run a head-turn challenge on a single photo, so when liveness is on it recognises faces but doesn't mark attendance.
+
+## Accuracy on LFW
+
+Measured with `python -m facerec evaluate` on [Labeled Faces in the Wild](https://vis-www.cs.umass.edu/lfw/) using the official 6,000-pair protocol: 3,000 same-person and 3,000 different-person pairs, 10-fold cross-validation. Each image goes through the **full pipeline** (YOLOv8 crop → MTCNN alignment → FaceNet), the same code that runs live. All 7,701 images were embedded and no pair was skipped.
+
+| Metric | Value |
+| --- | --- |
+| **Accuracy (10-fold cross-validation)** | **98.23% ± 0.43%** |
+| ROC AUC | 0.9943 |
+| Equal error rate | 1.97% |
+| True accept rate at 1% false accepts | 97.67% (threshold 1.113) |
+| True accept rate at 0.1% false accepts | 96.00% (threshold 1.026) |
+| Accuracy-maximising threshold | 1.078 → 98.37% |
+
+![ROC curve and distance histogram on LFW](docs/lfw_roc.png)
+
+For reference, the original [FaceNet implementation](https://github.com/davidsandberg/facenet) these VGGFace2 weights were ported from lists 99.65% on LFW with its own offline alignment. The gap comes from running LFW's unaligned images through the real-time detection pipeline rather than an offline face crop.
+
+### Choosing the match threshold
+
+| L2 threshold | Same-person pairs accepted | Different-person pairs accepted |
+| ---: | ---: | ---: |
+| **0.8 (default)** | 75.7% | 0.03% (1 in 3,000) |
+| 0.9 | 88.0% | 0.03% |
+| 1.0 | 94.8% | 0.10% |
+| 1.1 | 97.4% | 0.77% |
+
+LFW measures **1:1 verification**, but attendance is **1:N identification**: each face is compared with every enrolled photo, so the chance of *some* wrong match grows roughly with the number of enrolled people × photos per person. At a kiosk, a false reject costs a second of retrying on the next video frame (live frames are also much closer to the enrollment photos than LFW pairs are), while a false accept marks the wrong person present. So the default stays at a conservative **0.8**. For a small group, `recognition_threshold: 1.0` accepts noticeably more genuine matches while still allowing only 0.1% false accepts per comparison.
 
 ## Performance
 
@@ -192,7 +230,7 @@ End to end, `facerec run --liveness` on 5 synthetic "photo waved at the camera" 
 
 ```bash
 pip install -e ".[app,dev]"
-pytest          # 74 tests
+pytest          # 81 tests (the MTCNN edge-case tests skip without facenet-pytorch)
 ruff check .    # lint
 ruff format .   # format
 ```
@@ -214,6 +252,7 @@ This project builds on [todap/Face-Recognition-using-YoloV8-and-FaceNet](https:/
 - Vectorised matching over multiple embeddings per person
 - Streamlit web app for recognition, enrollment and attendance
 - `benchmark` and `evaluate` commands (per-stage latency; ROC/AUC/EER/TAR@FAR, LFW protocol)
+- LFW evaluation of the full pipeline (98.2%) and a data-backed threshold choice
 - Installable `facerec` package with CLI, YAML config, logging and type hints
 - pytest suite and GitHub Actions CI (ruff + pytest)
 - Bug fixes, portable paths, `.gitignore` for personal data
