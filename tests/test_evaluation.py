@@ -15,8 +15,10 @@ from facerec.evaluation import (  # noqa: E402
     kfold_accuracy,
     make_pairs,
     parse_lfw_pairs,
+    rates_at,
     roc_curve,
     tar_at_far,
+    threshold_at_far,
     verification_report,
 )
 
@@ -155,3 +157,28 @@ def test_make_pairs_needs_two_people(tmp_path):
     (tmp_path / "Alice" / "2.jpg").write_bytes(b"")
     with pytest.raises(ValueError):
         make_pairs(tmp_path)
+
+
+def test_rates_and_threshold_at_far():
+    # genuine pairs 0.1..1.0, impostors 0.5..1.4: overlapping in 0.5..1.0
+    d = np.r_[np.linspace(0.1, 1.0, 10), np.linspace(0.5, 1.4, 10)]
+    same = np.r_[np.ones(10, bool), np.zeros(10, bool)]
+    fpr, tpr, thresholds = roc_curve(d, same)
+
+    t = threshold_at_far(fpr, tpr, thresholds, 0.0)  # no impostor may be accepted
+    assert t == pytest.approx(0.4)  # last genuine distance below the first impostor (0.5)
+    tar, far = rates_at(d, same, t + 1e-9)
+    assert far == 0.0 and tar == pytest.approx(0.4)
+
+    assert rates_at(d, same, 0.0) == (0.0, 0.0)
+    assert rates_at(d, same, 10.0) == (1.0, 1.0)
+
+
+def test_report_includes_rates_at_configured_threshold():
+    d, same = separable()
+    report = verification_report(d, same, configured_threshold=0.5)
+
+    assert report.tar_at_configured_threshold == pytest.approx(33 / 50)  # 0.3..0.6 below 0.5
+    assert report.far_at_configured_threshold == 0.0
+    assert 0.6 <= report.threshold_at_far_1e3 < 1.0
+    assert "FAR 0.00%" in report.to_markdown()

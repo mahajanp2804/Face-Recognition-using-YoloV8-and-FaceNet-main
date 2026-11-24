@@ -197,6 +197,11 @@ def cmd_evaluate(args: argparse.Namespace, config: Config) -> int:
     if args.json:
         Path(args.json).write_text(json.dumps(report.to_dict(), indent=2))
         logger.info("Saved report to %s", args.json)
+    if args.distances:
+        import numpy as np
+
+        np.savez_compressed(args.distances, distances=distances, same=same)
+        logger.info("Saved pair distances to %s", args.distances)
     return 0
 
 
@@ -295,6 +300,9 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--folds", type=int, default=10, help="Cross-validation folds")
     evaluate.add_argument("--roc", help="Save a ROC curve + distance histogram PNG here")
     evaluate.add_argument("--json", help="Also save the metrics as JSON")
+    evaluate.add_argument(
+        "--distances", help="Save every pair's distance and label as .npz for later analysis"
+    )
     evaluate.set_defaults(func=cmd_evaluate)
 
     return parser

@@ -29,6 +29,11 @@ class FaceEmbedder:
         This is the same detect → select → extract sequence as ``MTCNN.forward``, kept
         separate so the landmarks it computes anyway are not thrown away.
         """
+        # MTCNN builds an image pyramid starting at min_face_size; a crop smaller than that
+        # leaves the pyramid empty and facenet-pytorch crashes in torch.cat. Such a tiny crop
+        # can't hold a usable face anyway.
+        if min(face_bgr.shape[:2]) < self.mtcnn.min_face_size:
+            return None, None
         img = Image.fromarray(cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB))
         boxes, probs, points = self.mtcnn.detect(img, landmarks=True)
         boxes, probs, points = self.mtcnn.select_boxes(
